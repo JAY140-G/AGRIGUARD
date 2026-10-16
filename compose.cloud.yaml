@@ -1,0 +1,15 @@
+# Cloud fallback for Docker builders without usable DNS/egress.
+# Run scripts/prepare.sh first. TLS verification remains enabled when fetching artifacts.
+services:
+  api:
+    build:
+      dockerfile: Dockerfile.prepared
+  migrate:
+    build:
+      dockerfile: Dockerfile.prepared
+  worker:
+    build:
+      dockerfile: Dockerfile.prepared
+  web:
+    build:
+      dockerfile: Dockerfile.prepared

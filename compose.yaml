@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: agriscan
+      POSTGRES_USER: agriscan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U agriscan -d agriscan"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  redis:
+    image: redis:7.4-alpine
+    command: [redis-server, --appendonly, 'yes', --maxmemory, 128mb, --maxmemory-policy, noeviction]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    build: ./backend
+    env_file: .env
+    command: [alembic, upgrade, head]
+    depends_on:
+      db: {condition: service_healthy}
+  api:
+    build: ./backend
+    env_file: .env
+    volumes: [images:/data/images]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    env_file: .env
+    command: [python, -m, app.worker]
+    volumes: [images:/data/images]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_MAP_STYLE: ${VITE_MAP_STYLE:-https://tiles.openfreemap.org/styles/liberty}
+        VITE_GEOCODER_URL: ${VITE_GEOCODER_URL:-https://nominatim.openstreetmap.org/search}
+    ports: ['127.0.0.1:8080:80']
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  redis_data:
+  images:

@@ -1,0 +1,6 @@
+# Cloud fallback: scripts/prepare.sh builds dist with the locked dependencies.
+FROM nginx:1.28-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY dist /usr/share/nginx/html
+RUN chmod -R a+rX /usr/share/nginx/html /etc/nginx/conf.d
+EXPOSE 80

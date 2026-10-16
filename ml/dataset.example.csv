@@ -1,0 +1,4 @@
+path,label,group,crop,domain,split
+images/farm-a-001.jpg,healthy,farm-a-session-1,wheat,closeup,train
+images/farm-b-001.jpg,rust,farm-b-session-1,wheat,closeup,val
+images/farm-c-001.jpg,leaf_spot,farm-c-session-1,wheat,closeup,test
