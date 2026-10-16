@@ -1,6 +1,6 @@
 import math
-from shapely.geometry import shape, Polygon, LineString, mapping
-from shapely import transform as _transform
+from shapely.geometry import shape, Polygon, LineString, Point, mapping
+from shapely import transform as _transform, affinity
 
 def transform(func, geom):
     return _transform(geom, func, interleaved=False)
@@ -49,40 +49,83 @@ def generate(data, options):
         if not full_metric.covers(e): raise ValueError('Exclusions must be within farm')
         exclusions.append(raw); metric=metric.difference(e)
     if metric.is_empty: raise ValueError('Exclusions remove the whole farm')
+
+    margin=getattr(options,'margin_m',0.0) or 0.0
+    if margin>0:
+        buffered=metric.buffer(-margin)
+        if buffered.is_empty or buffered.area<1:
+            raise ValueError(f'Margin of {margin}m leaves no surveyable area within the field')
+        metric=buffered
+
     camera=options.sensor_width_mm is not None and options.focal_length_mm is not None
     if camera:
         width=options.altitude_m*options.sensor_width_mm/options.focal_length_mm
         height=width*options.image_height_px/options.image_width_px
     else: width=options.altitude_m*.8; height=width*.75
-    spacing=max(1,width*(1-options.side_overlap)); trigger=max(1,height*(1-options.front_overlap))
-    minx,miny,maxx,maxy=metric.bounds
+
+    spacing=options.spacing_m if getattr(options,'spacing_m',None) else max(1.0,width*(1-options.side_overlap))
+    spacing=max(1.0,spacing)
+
+    capture_policy=getattr(options,'capture_policy','waypoints')
+    if getattr(options,'capture_interval_m',None) and options.capture_interval_m>0:
+        trigger=max(1.0,options.capture_interval_m)
+    else:
+        trigger=max(1.0,height*(1-options.front_overlap))
+
+    angle=getattr(options,'direction_deg',0.0) or 0.0
+    centroid=metric.centroid
+    work_geom=affinity.rotate(metric,-angle,origin=centroid) if angle!=0 else metric
+
+    minx,miny,maxx,maxy=work_geom.bounds
     if (maxy-miny)/spacing > 2000: raise ValueError('Too many survey lines; increase altitude or reduce overlap')
     count=max(1,math.ceil((maxy-miny)/spacing)); segments=[]
     for i in range(count):
         y=miny+(i+.5)*(maxy-miny)/count
-        cut=metric.intersection(LineString([(minx-1,y),(maxx+1,y)]))
+        cut=work_geom.intersection(LineString([(minx-1,y),(maxx+1,y)]))
         lines=list(cut.geoms) if hasattr(cut,'geoms') else [cut]
         lines=sorted([l for l in lines if l.geom_type=='LineString' and l.length>.1],key=lambda l:l.bounds[0],reverse=bool(i%2))
         for line in lines:
             coords=list(line.coords)
             if i%2: coords.reverse()
-            segments.append(LineString(coords))
+            seg=LineString(coords)
+            if angle!=0: seg=affinity.rotate(seg,angle,origin=centroid)
+            segments.append(seg)
     if not segments: raise ValueError('No survey route could be generated')
     if len(segments)>2000: raise ValueError('Too many survey segments')
     transit=[LineString([a.coords[-1],b.coords[0]]) for a,b in zip(segments,segments[1:]) if a.coords[-1]!=b.coords[0]]
     length=sum(s.length for s in segments); transfers=sum(s.length for s in transit)
+
     points=[]
-    for s in segments:
+    waypoints=[]
+    for s_idx,s in enumerate(segments):
         n=max(1,math.ceil(s.length/trigger))
         for i in range(n+1):
-            pt=transform(backward,s.interpolate(i/n,normalized=True))
+            m_pt=s.interpolate(i/n,normalized=True)
+            pt=transform(backward,m_pt)
             points.append([pt.x,pt.y])
+            inside=full_metric.buffer(0.5).covers(Point(m_pt))
+            waypoints.append({'order':len(waypoints)+1,'lon':round(pt.x,7),'lat':round(pt.y,7),
+                              'alt_m':options.altitude_m,'segment_index':s_idx,'action':'capture',
+                              'valid_containment':bool(inside)})
     if len(points)>10000: raise ValueError('Plan exceeds 10,000 captures')
+
+    assumptions=[
+        f'Ground speed is assumed constant at {options.speed_mps} m/s; wind and acceleration curves are not simulated.',
+        'Turnaround/banking time between survey segments is not included in estimated duration.',
+        f'Flight altitude of {options.altitude_m}m is above launch elevation (AGL) assuming flat terrain.',
+        'Obstacles inside the field are not dynamically avoided by the survey path; manual inspection is required.'
+    ]
+
     return {'survey_segments':[mapping(transform(backward,s)) for s in segments],
             'transit_segments':[mapping(transform(backward,s)) for s in transit],
             'capture_points':points,'launch':points[0],'return':points[-1],
+            'waypoints':waypoints,'waypoint_count':len(waypoints),
             'survey_distance_m':round(length,1),'transit_distance_m':round(transfers,1),
             'duration_s':round((length+transfers)/options.speed_mps), 'image_count':len(points),
-            'spacing_m':round(spacing,2),'camera_coverage':camera,'provisional':not camera,
+            'spacing_m':round(spacing,2),'margin_m':margin,'direction_deg':angle,
+            'camera_coverage':camera,'provisional':not camera,
+            'capture_policy':capture_policy,
+            'assumptions':assumptions,
             'exclusions':exclusions,'options':options.model_dump(),
             'warning':'Planning estimate only. Transit segments may cross exclusions or leave the boundary. Separately validate terrain, obstacles, airspace, weather, battery and aircraft capability. This is not an approved flight plan.'}
+

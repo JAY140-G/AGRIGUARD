@@ -17,6 +17,11 @@ class PlanInput(BaseModel):
     speed_mps: float = Field(default=5,ge=.5,le=15)
     front_overlap: float = Field(default=.75,ge=0,le=.95)
     side_overlap: float = Field(default=.65,ge=0,le=.95)
+    margin_m: float = Field(default=0.0,ge=0,le=100)
+    direction_deg: float = Field(default=0.0,ge=0,le=360)
+    spacing_m: float | None = Field(default=None,gt=0,le=500)
+    capture_policy: str = Field(default='waypoints',pattern='^(waypoints|distance|time)$')
+    capture_interval_m: float | None = Field(default=None,gt=0,le=1000)
     sensor_width_mm: float | None = Field(default=None,gt=0,le=100)
     focal_length_mm: float | None = Field(default=None,gt=0,le=1000)
     image_width_px: int = Field(default=4000,ge=100,le=20000)
@@ -35,6 +40,13 @@ class LocationInput(BaseModel):
     lon: float = Field(ge=-180,le=180)
     lat: float = Field(ge=-90,le=90)
 
+class ObjectDetectionResult(BaseModel):
+    detector_configured: bool = False
+    status: str = 'unavailable'
+    detector_name: str | None = None
+    detections: list[dict] = Field(default_factory=list)
+    message: str = 'No object detector configured. Detections and bounding boxes are not fabricated.'
+
 class Prediction(BaseModel):
     label: str
     score: float | None = Field(default=None,ge=0,le=1)
@@ -45,3 +57,5 @@ class Prediction(BaseModel):
     unsupported: bool
     simulated: bool
     analysis_mode: str
+    object_detection: ObjectDetectionResult | None = None
+

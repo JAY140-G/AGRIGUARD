@@ -151,8 +151,51 @@ def telemetry(ident:str,user=Depends(owner),db=Depends(db_session)): return json
 
 @app.post('/api/missions/{ident}/{action}')
 def command(ident:str,action:str,user=Depends(owner),db=Depends(db_session)):
-    if action not in ('start','pause','resume','abort','fail'): raise HTTPException(404,'Unknown simulator action')
-    m=mission_owned(db,ident,user); old=m.state; new=transition(old,action)
+    valid_actions=('start','pause','resume','abort','fail','rtl','hold','preflight','inject_obstacle','clear_obstacle')
+    if action not in valid_actions: raise HTTPException(404,'Unknown simulator action')
+    m=mission_owned(db,ident,user); old=m.state
+
+    if action=='inject_obstacle':
+        telem=json.loads(m.telemetry or '{}')
+        telem['obstacle']={
+            'sensor_status':'simulated_operational',
+            'is_simulated':True,
+            'detected':True,
+            'distance_m':7.8,
+            'bearing_deg':24.5,
+            'safe_state_triggered':True,
+            'reported_response':'hold',
+            'message':'SIMULATED OBSTACLE DETECTED at 7.8m (+24.5 deg). Flight controller executed safe-state hold.'
+        }
+        new_state='paused' if old in ('running','queued') else old
+        m.state=new_state; m.telemetry=json.dumps(telem)
+        db.commit(); db.refresh(m); return mission_dict(m)
+
+    if action=='clear_obstacle':
+        telem=json.loads(m.telemetry or '{}')
+        telem['obstacle']={
+            'sensor_status':'simulated_operational',
+            'is_simulated':True,
+            'detected':False,
+            'distance_m':None,
+            'bearing_deg':None,
+            'safe_state_triggered':False,
+            'reported_response':'none',
+            'message':None
+        }
+        m.telemetry=json.dumps(telem); db.commit(); db.refresh(m); return mission_dict(m)
+
+    if action=='preflight':
+        sim=Simulator(); sim.connect()
+        report=sim.preflight_check(json.loads(m.plan))
+        new=transition(old,'preflight')
+        telem=json.loads(m.telemetry or '{}')
+        telem['preflight']=report
+        m.state=new; m.telemetry=json.dumps(telem)
+        db.commit(); db.refresh(m); return mission_dict(m)
+
+    act_name='hold' if action=='hold' else action
+    new=transition(old,act_name)
     if action=='start':
         route=json.loads(m.plan)
         if route.get('boundary_snapshot')!=json.loads(db.get(Farm,m.farm_id).boundary): raise HTTPException(409,'Farm boundary changed; generate a new survey')
@@ -160,6 +203,54 @@ def command(ident:str,action:str,user=Depends(owner),db=Depends(db_session)):
     result=db.execute(update(Mission).where(Mission.id==ident,Mission.state==old).values(state=new,error='Injected simulator connection failure' if action=='fail' else None))
     if result.rowcount!=1: db.rollback(); raise HTTPException(409,'Mission changed; refresh before retrying')
     db.commit(); db.refresh(m); return mission_dict(m)
+
+@app.get('/api/missions/{ident}/export/{kind}')
+def export_mission(ident:str,kind:str,user=Depends(owner),db=Depends(db_session)):
+    m=mission_owned(db,ident,user)
+    plan=json.loads(m.plan)
+    points=plan.get('capture_points',[])
+    options=plan.get('options',{})
+    alt=options.get('altitude_m',60.0)
+    speed=options.get('speed_mps',5.0)
+    launch=plan.get('launch',points[0] if points else [0,0])
+
+    if kind=='qgc-plan':
+        items=[{
+            'autoContinue':True,'command':22,'frame':3,
+            'params':[15.0,0,0,0,launch[1],launch[0],alt],'type':'SimpleItem'
+        }]
+        for pt in points:
+            items.append({
+                'autoContinue':True,'command':16,'frame':3,
+                'params':[0,0,0,0,pt[1],pt[0],alt],'type':'SimpleItem'
+            })
+        items.append({
+            'autoContinue':True,'command':20,'frame':2,
+            'params':[0,0,0,0,0,0,0],'type':'SimpleItem'
+        })
+        qgc={
+            'fileType':'Plan','version':1,'groundStation':'QGroundControl',
+            'mission':{
+                'cruiseSpeed':speed,'hoverSpeed':speed,
+                'plannedHomePosition':[launch[1],launch[0],0.0],
+                'vehicleType':2,'items':items
+            },
+            'geoFence':{'circles':[],'polygons':[],'version':2},
+            'rallyPoints':{'points':[],'version':2}
+        }
+        return Response(json.dumps(qgc,indent=2),media_type='application/json',headers={'Content-Disposition':f'attachment; filename=agriscan-mission-{m.id[:8]}.plan'})
+
+    if kind=='mavlink-wpl':
+        lines=['QGC WPL 110']
+        lines.append(f'0\t1\t0\t16\t0\t0\t0\t0\t{launch[1]:.7f}\t{launch[0]:.7f}\t0.000000\t1')
+        lines.append(f'1\t0\t3\t22\t15\t0\t0\t0\t{launch[1]:.7f}\t{launch[0]:.7f}\t{alt:.1f}\t1')
+        for i,pt in enumerate(points):
+            lines.append(f'{i+2}\t0\t3\t16\t0\t0\t0\t0\t{pt[1]:.7f}\t{pt[0]:.7f}\t{alt:.1f}\t1')
+        lines.append(f'{len(points)+2}\t0\t2\t20\t0\t0\t0\t0\t0\t0\t0\t1')
+        return Response('\n'.join(lines),media_type='text/plain',headers={'Content-Disposition':f'attachment; filename=agriscan-mission-{m.id[:8]}.waypoints'})
+
+    raise HTTPException(404,'Use qgc-plan or mavlink-wpl')
+
 
 @app.post('/api/farms/{ident}/images',status_code=201)
 async def upload(ident:str,file:UploadFile=File(...),domain:str=Form('aerial'),mission_id:str|None=Form(None),lon:float|None=Form(None),lat:float|None=Form(None),user=Depends(owner),db=Depends(db_session)):

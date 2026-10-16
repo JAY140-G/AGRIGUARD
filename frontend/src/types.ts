@@ -1,7 +1,91 @@
 export type Position=[number,number];
 export type Polygon={type:'Polygon';coordinates:Position[][]};
 export type Farm={id:string;name:string;crop:string;planting_date:string|null;boundary:Polygon;area_ha:number;area_acres:number};
-export type Plan={survey_segments:GeoJSON.LineString[];transit_segments:GeoJSON.LineString[];capture_points:Position[];launch:Position;return:Position;survey_distance_m:number;transit_distance_m:number;duration_s:number;image_count:number;spacing_m:number;camera_coverage:boolean;provisional:boolean;exclusions:Polygon[];warning:string};
-export type Mission={id:string;farm_id:string;state:string;plan:Plan;progress:number;created:string;telemetry:{position?:Position;battery_percent?:number;captured?:number;total?:number};error?:string};
-export type Photo={id:string;farm_id:string;mission_id:string|null;captured:string;lon:number|null;lat:number|null;location_source:string;metadata:Record<string,string|number>;domain:string;simulated_capture:boolean;status:string;result:{label:string;score:number|null;model_version:string;domain:string;uncertain:boolean;unsupported:boolean;simulated:boolean;analysis_mode:string}|null;feedback:string|null};
+export type Waypoint={order:number;lon:number;lat:number;alt_m:number;segment_index?:number;action:string;valid_containment:boolean};
+export type Plan={
+    survey_segments:GeoJSON.LineString[];
+    transit_segments:GeoJSON.LineString[];
+    capture_points:Position[];
+    launch:Position;
+    return:Position;
+    waypoints?:Waypoint[];
+    waypoint_count?:number;
+    survey_distance_m:number;
+    transit_distance_m:number;
+    duration_s:number;
+    image_count:number;
+    spacing_m:number;
+    margin_m?:number;
+    direction_deg?:number;
+    capture_policy?:string;
+    assumptions?:string[];
+    camera_coverage:boolean;
+    provisional:boolean;
+    exclusions:Polygon[];
+    warning:string;
+    options?:Record<string,any>;
+};
+export type ObstacleInfo={
+    sensor_status:string;
+    is_simulated:boolean;
+    detected:boolean;
+    distance_m:number|null;
+    bearing_deg:number|null;
+    safe_state_triggered:boolean;
+    reported_response:string;
+    message?:string|null;
+};
+export type Mission={
+    id:string;
+    farm_id:string;
+    state:string;
+    plan:Plan;
+    progress:number;
+    created:string;
+    telemetry:{
+        position?:Position;
+        battery_percent?:number;
+        altitude_m?:number;
+        heading_deg?:number;
+        speed_mps?:number;
+        captured?:number;
+        total?:number;
+        flight_mode?:string;
+        obstacle?:ObstacleInfo;
+        preflight?:Record<string,unknown>;
+    };
+    error?:string;
+};
+export type Photo={
+    id:string;
+    farm_id:string;
+    mission_id:string|null;
+    captured:string;
+    lon:number|null;
+    lat:number|null;
+    location_source:string;
+    metadata:Record<string,string|number>;
+    domain:string;
+    simulated_capture:boolean;
+    status:string;
+    result:{
+        label:string;
+        score:number|null;
+        model_version:string;
+        domain:string;
+        uncertain:boolean;
+        unsupported:boolean;
+        simulated:boolean;
+        analysis_mode:string;
+        object_detection?:{
+            detector_configured:boolean;
+            status:string;
+            detector_name:string|null;
+            detections:Array<Record<string,unknown>>;
+            message:string;
+        };
+    }|null;
+    feedback:string|null;
+};
 export const featureCollection=(features:GeoJSON.Feature[]):GeoJSON.FeatureCollection=>({type:'FeatureCollection',features});
+

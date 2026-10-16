@@ -1,8 +1,12 @@
 from typing import Protocol
-from .schemas import Prediction
+from .schemas import Prediction, ObjectDetectionResult
 
 class InferenceAdapter(Protocol):
     def analyze(self, data: bytes, crop: str, domain: str) -> Prediction: ...
+
+class ObjectDetector(Protocol):
+    """Optional object detection interface. Returns actual detections when configured."""
+    def detect(self, data: bytes) -> ObjectDetectionResult: ...
 
 class DemoAnalyzer:
     """Deterministic display data; no trained model and no diagnostic claims."""
@@ -11,7 +15,9 @@ class DemoAnalyzer:
         supported=domain in ('aerial','closeup') and crop.lower() in ('wheat','rice','maize','corn','soybean','cotton')
         labels=['No simulated alert','Suspected water stress','Suspected canopy anomaly'] if domain=='aerial' else ['No simulated alert','Suspected leaf spot','Suspected discoloration']
         label=labels[int(hashlib.sha256(data).hexdigest()[:8],16)%len(labels)] if supported else 'Unsupported crop or image domain'
-        return Prediction(label=label,score=None,model_version='demo-hash-v1',supported_crops=['wheat','rice','maize','corn','soybean','cotton'],domain=domain,uncertain=True,unsupported=not supported,simulated=True,analysis_mode='Simulated analysis')
+        obj_det=ObjectDetectionResult(detector_configured=False,status='unavailable',detector_name=None,detections=[],message='No object detector configured. Detections and bounding boxes are not fabricated.')
+        return Prediction(label=label,score=None,model_version='demo-hash-v1',supported_crops=['wheat','rice','maize','corn','soybean','cotton'],domain=domain,uncertain=True,unsupported=not supported,simulated=True,analysis_mode='Simulated analysis',object_detection=obj_det)
+
 
 class TorchScriptAdapter:
     """Opt-in extension; never selected automatically. Manifest and domain are mandatory."""

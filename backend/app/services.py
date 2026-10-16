@@ -39,8 +39,9 @@ def read_image(data):
     except (OSError, SyntaxError, KeyError, TypeError, ZeroDivisionError, Image.DecompressionBombError) as e:
         raise ValueError('Corrupt or invalid image metadata') from e
 
-def add_photo(db,farm, data, domain, mission_id=None, manual=None, simulated=False, simulated_location=None):
+def add_photo(db,farm, data, domain, mission_id=None, manual=None, simulated=False, simulated_location=None, extra_metadata=None):
     metadata,location,ext=read_image(data)
+    if extra_metadata: metadata.update(extra_metadata)
     digest=hashlib.sha256(data).hexdigest()
     existing=db.scalar(select(Photo).where(Photo.farm_id==farm.id,Photo.digest==digest))
     if existing: return existing,False
@@ -62,6 +63,7 @@ def add_photo(db,farm, data, domain, mission_id=None, manual=None, simulated=Fal
     db.add(photo); db.flush()
     job=Job(id=uid(),photo_id=ident,status='queued'); db.add(job); db.flush()
     return photo,True
+
 
 def synthetic(mission_id,index):
     import random
